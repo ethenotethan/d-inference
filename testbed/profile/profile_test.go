@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/eigeninference/d-inference/testbed"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestProfilerBuildProfile(t *testing.T) {
@@ -31,34 +33,18 @@ func TestProfilerBuildProfile(t *testing.T) {
 
 	run := p.BuildProfile()
 
-	if len(run.Requests) != 5 {
-		t.Fatalf("expected 5 requests, got %d", len(run.Requests))
-	}
+	assert.Len(t, run.Requests, 5)
 
 	ttftStats, ok := run.Aggregated[testbed.SegmentTTFT]
-	if !ok {
-		t.Fatal("expected TTFT stats in aggregated")
-	}
-	if ttftStats.Count != 5 {
-		t.Fatalf("expected 5 TTFT measurements, got %d", ttftStats.Count)
-	}
-	if ttftStats.Mean < time.Millisecond {
-		t.Fatalf("TTFT mean too low: %s", ttftStats.Mean)
-	}
-	if ttftStats.Min > ttftStats.Max {
-		t.Fatalf("min > max: min=%s max=%s", ttftStats.Min, ttftStats.Max)
-	}
-	if ttftStats.P95 < ttftStats.Mean {
-		t.Fatalf("p95 < mean: p95=%s mean=%s", ttftStats.P95, ttftStats.Mean)
-	}
+	require.True(t, ok, "expected TTFT stats in aggregated")
+	assert.Equal(t, 5, ttftStats.Count)
+	assert.GreaterOrEqual(t, ttftStats.Mean, time.Millisecond)
+	assert.LessOrEqual(t, ttftStats.Min, ttftStats.Max)
+	assert.GreaterOrEqual(t, ttftStats.P95, ttftStats.Mean)
 
 	e2eStats, ok := run.Aggregated[testbed.SegmentTotalE2E]
-	if !ok {
-		t.Fatal("expected TotalE2E stats in aggregated")
-	}
-	if e2eStats.Count != 5 {
-		t.Fatalf("expected 5 E2E measurements, got %d", e2eStats.Count)
-	}
+	require.True(t, ok, "expected TotalE2E stats in aggregated")
+	assert.Equal(t, 5, e2eStats.Count)
 }
 
 func TestProfilerDiff(t *testing.T) {
@@ -89,15 +75,10 @@ func TestProfilerDiff(t *testing.T) {
 	diff := p.Diff(previous)
 
 	ttftDiff, ok := diff.Segments[testbed.SegmentTTFT]
-	if !ok {
-		t.Fatal("expected TTFT in diff")
-	}
-	if ttftDiff.Previous == nil || ttftDiff.Current == nil {
-		t.Fatal("expected both previous and current stats")
-	}
-	if ttftDiff.MeanDelta <= 0 {
-		t.Fatalf("expected positive mean delta (slower run), got %s", ttftDiff.MeanDelta)
-	}
+	require.True(t, ok, "expected TTFT in diff")
+	require.NotNil(t, ttftDiff.Previous)
+	require.NotNil(t, ttftDiff.Current)
+	assert.Positive(t, ttftDiff.MeanDelta)
 }
 
 func TestProfileRunSummaryTable(t *testing.T) {
@@ -113,10 +94,7 @@ func TestProfileRunSummaryTable(t *testing.T) {
 	inst.RequestEnd(rid, 0)
 
 	run := p.BuildProfile()
-	table := run.SummaryTable()
-	if table == "" {
-		t.Fatal("expected non-empty summary table")
-	}
+	assert.NotEmpty(t, run.SummaryTable())
 }
 
 func TestProfileRunToJSON(t *testing.T) {
@@ -133,10 +111,6 @@ func TestProfileRunToJSON(t *testing.T) {
 
 	run := p.BuildProfile()
 	b, err := run.ToJSON()
-	if err != nil {
-		t.Fatalf("JSON marshal failed: %v", err)
-	}
-	if len(b) == 0 {
-		t.Fatal("expected non-empty JSON output")
-	}
+	require.NoError(t, err)
+	assert.NotEmpty(t, b)
 }

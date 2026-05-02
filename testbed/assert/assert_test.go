@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/eigeninference/d-inference/testbed"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAsserterEvaluatePass(t *testing.T) {
@@ -23,9 +25,7 @@ func TestAsserterEvaluatePass(t *testing.T) {
 	}
 
 	report := a.Evaluate(stats)
-	if !report.Passed {
-		t.Fatalf("expected pass, got fail: %v", report.Results)
-	}
+	assert.True(t, report.Passed, "expected pass, got fail: %v", report.Results)
 }
 
 func TestAsserterEvaluateFail(t *testing.T) {
@@ -44,22 +44,15 @@ func TestAsserterEvaluateFail(t *testing.T) {
 	}
 
 	report := a.Evaluate(stats)
-	if report.Passed {
-		t.Fatal("expected fail, got pass")
-	}
+	assert.False(t, report.Passed)
 
-	passCount := 0
-	failCount := 0
+	var failCount int
 	for _, r := range report.Results {
-		if r.Passed {
-			passCount++
-		} else {
+		if !r.Passed {
 			failCount++
 		}
 	}
-	if failCount != 2 {
-		t.Fatalf("expected 2 failures (mean + p95), got %d", failCount)
-	}
+	assert.Equal(t, 2, failCount, "expected 2 failures (mean + p95)")
 }
 
 func TestAsserterMissingSegment(t *testing.T) {
@@ -68,33 +61,22 @@ func TestAsserterMissingSegment(t *testing.T) {
 	}
 
 	a := NewAsserter(thresholds)
-
-	stats := map[testbed.Segment]*SegmentStatsView{}
-
-	report := a.Evaluate(stats)
-	if report.Passed {
-		t.Fatal("expected fail for missing segment, got pass")
-	}
+	report := a.Evaluate(map[testbed.Segment]*SegmentStatsView{})
+	assert.False(t, report.Passed, "expected fail for missing segment")
 }
 
 func TestDefaultThresholds(t *testing.T) {
 	thresholds := DefaultThresholds()
-	if len(thresholds) == 0 {
-		t.Fatal("expected non-empty default thresholds")
-	}
+	require.NotEmpty(t, thresholds)
 
 	found := false
 	for _, th := range thresholds {
 		if th.Segment == testbed.SegmentTotalE2E {
 			found = true
-			if th.MaxMean == 0 {
-				t.Fatal("TotalE2E MaxMean should not be zero")
-			}
+			assert.NotZero(t, th.MaxMean, "TotalE2E MaxMean should not be zero")
 		}
 	}
-	if !found {
-		t.Fatal("expected TotalE2E in default thresholds")
-	}
+	assert.True(t, found, "expected TotalE2E in default thresholds")
 }
 
 func TestAssertionReportSummaryTable(t *testing.T) {
@@ -106,10 +88,7 @@ func TestAssertionReportSummaryTable(t *testing.T) {
 		},
 	}
 
-	table := report.SummaryTable()
-	if table == "" {
-		t.Fatal("expected non-empty summary table")
-	}
+	assert.NotEmpty(t, report.SummaryTable())
 }
 
 func TestAccountingAsserterNoNegativeBalances(t *testing.T) {
@@ -119,7 +98,5 @@ func TestAccountingAsserterNoNegativeBalances(t *testing.T) {
 			{Name: "no_negative_balances", Passed: true, Message: "no negative balances detected"},
 		},
 	}
-	if !report.Passed {
-		t.Fatal("expected pass")
-	}
+	assert.True(t, report.Passed)
 }

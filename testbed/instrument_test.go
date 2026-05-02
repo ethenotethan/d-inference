@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestInstrumentRequestLifecycle(t *testing.T) {
@@ -20,25 +22,12 @@ func TestInstrumentRequestLifecycle(t *testing.T) {
 	inst.RequestEnd(rid, 10*time.Millisecond)
 
 	events := buf.Events()
-	if len(events) != 4 {
-		t.Fatalf("expected 4 events, got %d", len(events))
-	}
-
-	if events[0].Kind != EventRequestStart {
-		t.Fatalf("expected request_start, got %s", events[0].Kind)
-	}
-	if events[1].Kind != EventSegmentStart {
-		t.Fatalf("expected segment_start, got %s", events[1].Kind)
-	}
-	if events[2].Kind != EventSegmentEnd {
-		t.Fatalf("expected segment_end, got %s", events[2].Kind)
-	}
-	if events[2].Duration < time.Millisecond {
-		t.Fatalf("segment duration too short: %s", events[2].Duration)
-	}
-	if events[3].Kind != EventRequestEnd {
-		t.Fatalf("expected request_end, got %s", events[3].Kind)
-	}
+	assert.Len(t, events, 4)
+	assert.Equal(t, EventRequestStart, events[0].Kind)
+	assert.Equal(t, EventSegmentStart, events[1].Kind)
+	assert.Equal(t, EventSegmentEnd, events[2].Kind)
+	assert.GreaterOrEqual(t, events[2].Duration, time.Millisecond)
+	assert.Equal(t, EventRequestEnd, events[3].Kind)
 }
 
 func TestInstrumentRequestHelper(t *testing.T) {
@@ -54,14 +43,8 @@ func TestInstrumentRequestHelper(t *testing.T) {
 	ri.End()
 
 	events := buf.Events()
-	if len(events) != 6 {
-		t.Fatalf("expected 6 events (request_start + segment_start + segment_end + 2 chunks + request_end), got %d", len(events))
-	}
-
-	chunks := buf.ByKind(EventStreamChunk)
-	if len(chunks) != 2 {
-		t.Fatalf("expected 2 chunk events, got %d", len(chunks))
-	}
+	assert.Len(t, events, 6)
+	assert.Len(t, buf.ByKind(EventStreamChunk), 2)
 }
 
 func TestInstrumentError(t *testing.T) {
@@ -72,12 +55,8 @@ func TestInstrumentError(t *testing.T) {
 	inst.Error(rid, fmt.Errorf("test error"))
 
 	events := buf.Events()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
-	}
-	if events[0].Kind != EventError {
-		t.Fatalf("expected error event, got %s", events[0].Kind)
-	}
+	assert.Len(t, events, 1)
+	assert.Equal(t, EventError, events[0].Kind)
 }
 
 func TestInstrumentFanOut(t *testing.T) {
@@ -89,10 +68,6 @@ func TestInstrumentFanOut(t *testing.T) {
 	rid := inst.NewRequestID()
 	inst.RequestStart(rid)
 
-	if len(b1.Events()) != 1 {
-		t.Fatalf("b1: expected 1 event")
-	}
-	if len(b2.Events()) != 1 {
-		t.Fatalf("b2: expected 1 event")
-	}
+	assert.Len(t, b1.Events(), 1)
+	assert.Len(t, b2.Events(), 1)
 }
