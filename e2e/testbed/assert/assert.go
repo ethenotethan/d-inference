@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eigeninference/d-inference/testbed"
+	"github.com/eigeninference/d-inference/e2e/testbed"
 )
 
 type Threshold struct {

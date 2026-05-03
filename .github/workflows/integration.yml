@@ -45,4 +45,4 @@ jobs:
 
       - name: Run integration tests
         run: |
-          go test ./testbed/integration/ -count=1 -v -timeout 10m
+          go test ./e2e/ -count=1 -v -timeout 10m

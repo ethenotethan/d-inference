@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eigeninference/d-inference/testbed"
+	"github.com/eigeninference/d-inference/e2e/testbed"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

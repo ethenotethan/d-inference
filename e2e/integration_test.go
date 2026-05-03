@@ -1,4 +1,4 @@
-package integration
+package e2e
 
 import (
 	"bufio"
@@ -22,10 +22,10 @@ import (
 	"github.com/eigeninference/d-inference/coordinator/payments"
 	"github.com/eigeninference/d-inference/coordinator/registry"
 	"github.com/eigeninference/d-inference/coordinator/store"
-	"github.com/eigeninference/d-inference/testbed"
-	tbassert "github.com/eigeninference/d-inference/testbed/assert"
-	"github.com/eigeninference/d-inference/testbed/deps"
-	"github.com/eigeninference/d-inference/testbed/profile"
+	"github.com/eigeninference/d-inference/e2e/testbed"
+	tbassert "github.com/eigeninference/d-inference/e2e/testbed/assert"
+	"github.com/eigeninference/d-inference/e2e/testbed/deps"
+	"github.com/eigeninference/d-inference/e2e/testbed/profile"
 )
 
 var (
