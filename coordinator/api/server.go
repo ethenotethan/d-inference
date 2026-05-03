@@ -374,6 +374,11 @@ func (s *Server) SetStepCACerts(root, intermediate *x509.Certificate) {
 	s.stepCAIntermediateCert = intermediate
 }
 
+// Ledger returns the payment ledger used by this server.
+func (s *Server) Ledger() *payments.Ledger {
+	return s.ledger
+}
+
 // SetBilling configures the billing service for multi-chain payments and referrals.
 func (s *Server) SetBilling(svc *billing.Service) {
 	s.billing = svc

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"time"
@@ -17,9 +18,6 @@ type PostgresLifecycle struct {
 }
 
 func NewPostgresLifecycle(logger *slog.Logger, port int) *PostgresLifecycle {
-	if port == 0 {
-		port = 5433
-	}
 	return &PostgresLifecycle{
 		Port:   port,
 		Logger: logger,
@@ -29,6 +27,15 @@ func NewPostgresLifecycle(logger *slog.Logger, port int) *PostgresLifecycle {
 func (p *PostgresLifecycle) Start(ctx context.Context) error {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return fmt.Errorf("testbed/deps: docker not found in PATH (required for ephemeral Postgres)")
+	}
+
+	if p.Port == 0 {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return fmt.Errorf("testbed/deps: find free port: %w", err)
+		}
+		p.Port = listener.Addr().(*net.TCPAddr).Port
+		listener.Close()
 	}
 
 	p.DatabaseURL = fmt.Sprintf("postgres://testbed:testbed@127.0.0.1:%d/testbed?sslmode=disable", p.Port)

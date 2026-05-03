@@ -27,7 +27,7 @@ const (
 type ProviderConfig struct {
 	NumProviders        int
 	TrustLevel          TrustLevel
-	E2EEncryption       bool
+	ModelID             string
 	AttestationInterval time.Duration
 }
 

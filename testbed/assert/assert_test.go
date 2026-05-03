@@ -90,13 +90,3 @@ func TestAssertionReportSummaryTable(t *testing.T) {
 
 	assert.NotEmpty(t, report.SummaryTable())
 }
-
-func TestAccountingAsserterNoNegativeBalances(t *testing.T) {
-	report := &AssertionReport{
-		Passed: true,
-		Results: []AssertionResult{
-			{Name: "no_negative_balances", Passed: true, Message: "no negative balances detected"},
-		},
-	}
-	assert.True(t, report.Passed)
-}

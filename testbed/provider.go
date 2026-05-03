@@ -38,9 +38,16 @@ func (p *ProviderLifecycle) Start(ctx context.Context, cfg ProviderConfig) error
 
 	ctx, p.cancel = context.WithCancel(ctx)
 
-	args := []string{"serve", "--coordinator-url", p.CoordinatorURL}
-	if cfg.TrustLevel != TrustNone {
-		args = append(args, "--trust-level", string(cfg.TrustLevel))
+	wsURL := p.CoordinatorURL
+	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
+	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
+	if !strings.HasSuffix(wsURL, "/ws/provider") {
+		wsURL += "/ws/provider"
+	}
+
+	args := []string{"serve", "--coordinator", wsURL}
+	if cfg.ModelID != "" {
+		args = append(args, "--model", cfg.ModelID)
 	}
 
 	p.cmd = exec.CommandContext(ctx, p.BinaryPath, args...)
@@ -100,6 +107,41 @@ func findProviderBinary() string {
 		return path
 	}
 	return ""
+}
+
+func BuildProvider(ctx context.Context, logger *slog.Logger) (string, error) {
+	repoRoot := os.Getenv("DARKBLOOM_REPO_ROOT")
+	if repoRoot == "" {
+		repoRoot = "."
+	}
+	providerDir := repoRoot + "/provider"
+
+	binaryPath := providerDir + "/target/release/darkbloom"
+	if _, err := os.Stat(binaryPath); err == nil {
+		logger.Info("using cached provider binary", "path", binaryPath)
+		return binaryPath, nil
+	}
+
+	logger.Info("building provider binary (cargo build --release)", "dir", providerDir)
+
+	cmd := exec.CommandContext(ctx, "cargo", "build", "--release")
+	cmd.Dir = providerDir
+	cmd.Env = append(os.Environ(),
+		"PYO3_PYTHON=python3.12",
+		"PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1",
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("testbed: cargo build provider: %w: %s", err, string(out))
+	}
+
+	if _, err := os.Stat(binaryPath); err != nil {
+		return "", fmt.Errorf("testbed: provider binary not found after build: %s", binaryPath)
+	}
+
+	logger.Info("provider binary built", "path", binaryPath)
+	return binaryPath, nil
 }
 
 type logWriter struct {
