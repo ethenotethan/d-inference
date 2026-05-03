@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -17,164 +16,58 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
-	"github.com/eigeninference/d-inference/coordinator/api"
-	"github.com/eigeninference/d-inference/coordinator/billing"
-	"github.com/eigeninference/d-inference/coordinator/payments"
-	"github.com/eigeninference/d-inference/coordinator/registry"
-	"github.com/eigeninference/d-inference/coordinator/store"
 	"github.com/eigeninference/d-inference/e2e/testbed"
 	tbassert "github.com/eigeninference/d-inference/e2e/testbed/assert"
-	"github.com/eigeninference/d-inference/e2e/testbed/deps"
 	"github.com/eigeninference/d-inference/e2e/testbed/profile"
 )
 
 var (
-	envMu    sync.Mutex
-	envOnce  sync.Once
-	envReady bool
-	envErr   error
-
-	envCtx      context.Context
-	envCancel   context.CancelFunc
-	envLogger   *slog.Logger
-	envPg       *deps.PostgresLifecycle
-	envPgStore  store.Store
-	envCoord    *testbed.CoordinatorLifecycle
-	envProvider *testbed.ProviderLifecycle
-	envModelID  string
+	suiteMu   sync.Mutex
+	suiteOnce sync.Once
+	suite     *testbed.Suite
+	suiteErr  error
+	suiteCtx  context.Context
+	suiteDone context.CancelFunc
 )
 
-func ensureEnvironment(t *testing.T) {
+func ensureSuite(t *testing.T) {
 	t.Helper()
 
-	envOnce.Do(func() {
-		envCtx, envCancel = context.WithTimeout(context.Background(), 5*time.Minute)
-
-		if os.Getenv("DARKBLOOM_REPO_ROOT") == "" {
-			if cwd, err := os.Getwd(); err == nil {
-				os.Setenv("DARKBLOOM_REPO_ROOT", cwd+"/../..")
-			}
+	suiteOnce.Do(func() {
+		suiteCtx, suiteDone = context.WithTimeout(context.Background(), 5*time.Minute)
+		suite = testbed.NewSuite(testbed.SuiteConfig{})
+		suiteErr = suite.Start(suiteCtx)
+		if suiteErr != nil {
+			suite.Logger.Error("failed to start suite", "error", suiteErr)
+			suite.Stop()
 		}
-
-		envLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-
-		envModelID = os.Getenv("TESTBED_MODEL_ID")
-		if envModelID == "" {
-			envModelID = "mlx-community/Qwen3.5-0.8B-MLX-4bit"
-		}
-
-		envErr = startEnvironment()
-		if envErr != nil {
-			envLogger.Error("failed to start test environment", "error", envErr)
-			stopEnvironment()
-		}
-		envReady = true
 	})
 
-	if envErr != nil {
-		t.Fatalf("environment startup failed: %v", envErr)
+	if suiteErr != nil {
+		t.Fatalf("suite startup failed: %v", suiteErr)
 	}
 }
 
 func TestMain(m *testing.M) {
 	code := m.Run()
 
-	envMu.Lock()
-	if envReady {
-		stopEnvironment()
+	suiteMu.Lock()
+	if suite != nil && suiteErr == nil {
+		suite.Stop()
 	}
-	envMu.Unlock()
+	if suiteDone != nil {
+		suiteDone()
+	}
+	suiteMu.Unlock()
 
 	os.Exit(code)
 }
 
-func startEnvironment() error {
-	envPg = deps.NewPostgresLifecycle(envLogger, 0)
-	if err := envPg.Start(envCtx); err != nil {
-		return fmt.Errorf("postgres: %w", err)
-	}
-	envLogger.Info("postgres started", "url", envPg.DatabaseURL)
-
-	var err error
-	envPgStore, err = testbed.NewPostgresStore(envCtx, envPg.DatabaseURL)
-	if err != nil {
-		return fmt.Errorf("postgres store: %w", err)
-	}
-	if err := envPgStore.Credit("admin", 100_000_000, store.LedgerDeposit, "test-seed"); err != nil {
-		return fmt.Errorf("seed balance: %w", err)
-	}
-
-	providerBinary, err := testbed.BuildProvider(envCtx, envLogger)
-	if err != nil {
-		return fmt.Errorf("build provider: %w", err)
-	}
-
-	envCoord, err = testbed.NewCoordinatorLifecycle(envCtx, envPgStore, envLogger)
-	if err != nil {
-		return fmt.Errorf("coordinator create: %w", err)
-	}
-	envCoord.Registry.SetQueue(registry.NewRequestQueue(100, 120*time.Second))
-
-	ledger := payments.NewLedger(envPgStore)
-	billingSvc := billing.NewService(envPgStore, ledger, envLogger, billing.Config{MockMode: true})
-	envCoord.Server.SetBilling(billingSvc)
-	envCoord.Server.SetRuntimeManifest(&api.RuntimeManifest{})
-
-	if err := envCoord.Start(envCtx); err != nil {
-		return fmt.Errorf("coordinator start: %w", err)
-	}
-	envLogger.Info("coordinator started", "base_url", envCoord.BaseURL())
-
-	envProvider = testbed.NewProviderLifecycle(providerBinary, envCoord.BaseURL(), envLogger)
-	if err := envProvider.Start(envCtx, testbed.ProviderConfig{
-		ModelID:    envModelID,
-		TrustLevel: testbed.TrustNone,
-	}); err != nil {
-		return fmt.Errorf("provider start: %w", err)
-	}
-	envLogger.Info("provider started, waiting for registration...")
-
-	deadline := time.Now().Add(3 * time.Minute)
-	for time.Now().Before(deadline) {
-		if envCoord.Registry.ProviderCount() > 0 {
-			break
-		}
-		time.Sleep(1 * time.Second)
-	}
-	if envCoord.Registry.ProviderCount() == 0 {
-		return fmt.Errorf("no providers registered after 3m")
-	}
-	envLogger.Info("provider registered", "count", envCoord.Registry.ProviderCount())
-
-	for _, id := range envCoord.Registry.ProviderIDs() {
-		envCoord.Registry.SetTrustLevel(id, registry.TrustSelfSigned)
-		envCoord.Registry.RecordChallengeSuccess(id)
-	}
-	envLogger.Info("provider promoted to self-signed trust")
-
-	return nil
-}
-
-func stopEnvironment() {
-	if envProvider != nil {
-		envProvider.Stop()
-	}
-	if envCoord != nil {
-		envCoord.Stop()
-	}
-	if envPg != nil {
-		envPg.Stop()
-	}
-	if envCancel != nil {
-		envCancel()
-	}
-}
-
-func postChatCompletions(t *testing.T, prompt string, stream bool, maxTokens int) *http.Response {
+func postChatCompletions(t *testing.T, s *testbed.Suite, prompt string, stream bool, maxTokens int) *http.Response {
 	t.Helper()
 
 	body := map[string]any{
-		"model":       envModelID,
+		"model":       s.ModelID,
 		"messages":    []map[string]string{{"role": "user", "content": prompt}},
 		"stream":      stream,
 		"max_tokens":  maxTokens,
@@ -182,8 +75,8 @@ func postChatCompletions(t *testing.T, prompt string, stream bool, maxTokens int
 	}
 	bodyJSON, _ := json.Marshal(body)
 
-	req, err := http.NewRequestWithContext(envCtx, http.MethodPost,
-		envCoord.BaseURL()+"/v1/chat/completions", strings.NewReader(string(bodyJSON)))
+	req, err := http.NewRequestWithContext(s.Ctx, http.MethodPost,
+		s.Coordinator.BaseURL()+"/v1/chat/completions", strings.NewReader(string(bodyJSON)))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer testbed-admin-key")
 	req.Header.Set("Content-Type", "application/json")
@@ -193,48 +86,41 @@ func postChatCompletions(t *testing.T, prompt string, stream bool, maxTokens int
 	return resp
 }
 
-func assertAccounting(t *testing.T) {
+func assertAccounting(t *testing.T, s *testbed.Suite) {
 	t.Helper()
 
-	envMu.Lock()
-	pgDB := envPg.DatabaseURL
-	pgStore := envPgStore
-	envMu.Unlock()
-
-	pool, err := pgxpool.New(envCtx, pgDB)
+	pool, err := pgxpool.New(s.Ctx, s.Pg.DatabaseURL)
 	require.NoError(t, err)
 	defer pool.Close()
 
 	pgAsserter := tbassert.NewPostgresAccountingAsserter(pool)
-	acctReport := pgAsserter.EvaluateAll(envCtx)
-	t.Logf("\n%s", acctReport.SummaryTable())
-	require.True(t, acctReport.Passed, "accounting integrity check failed")
+	acctReport := pgAsserter.EvaluateAll(s.Ctx)
+	require.True(t, acctReport.Passed, "accounting integrity check failed\n%s", acctReport.SummaryTable())
 
-	storeAsserter := tbassert.NewAccountingAsserter(pgStore)
-	storeReport := storeAsserter.EvaluateAll(envCtx)
-	t.Logf("\n%s", storeReport.SummaryTable())
-	require.True(t, storeReport.Passed, "store-level accounting check failed")
+	storeAsserter := tbassert.NewAccountingAsserter(s.PgStore)
+	storeReport := storeAsserter.EvaluateAll(s.Ctx)
+	require.True(t, storeReport.Passed, "store-level accounting check failed\n%s", storeReport.SummaryTable())
 }
 
 func TestIntegration_NonStreamingInference(t *testing.T) {
-	ensureEnvironment(t)
+	ensureSuite(t)
 	t.Parallel()
 
-	resp := postChatCompletions(t, "What is 2+2? Answer with just the number.", false, 20)
+	resp := postChatCompletions(t, suite, "What is 2+2? Answer with just the number.", false, 20)
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	require.Equal(t, http.StatusOK, resp.StatusCode, "body: %s", string(respBody[:min(len(respBody), 500)]))
 	t.Logf("non-streaming response: %s", string(respBody[:min(len(respBody), 200)]))
 
-	assertAccounting(t)
+	assertAccounting(t, suite)
 }
 
 func TestIntegration_StreamingInference(t *testing.T) {
-	ensureEnvironment(t)
+	ensureSuite(t)
 	t.Parallel()
 
-	resp := postChatCompletions(t, "Count from 1 to 5.", true, 50)
+	resp := postChatCompletions(t, suite, "Count from 1 to 5.", true, 50)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -248,11 +134,11 @@ func TestIntegration_StreamingInference(t *testing.T) {
 	require.Greater(t, chunks, 0, "expected at least one SSE chunk")
 	t.Logf("streaming: received %d SSE chunks", chunks)
 
-	assertAccounting(t)
+	assertAccounting(t, suite)
 }
 
 func TestIntegration_MultipleRequestsAccounting(t *testing.T) {
-	ensureEnvironment(t)
+	ensureSuite(t)
 	t.Parallel()
 
 	buf := testbed.NewEventBuffer()
@@ -264,7 +150,7 @@ func TestIntegration_MultipleRequestsAccounting(t *testing.T) {
 		ri := inst.NewRequest()
 		clientTimer := ri.StartSegment(testbed.SegmentClientToCoordinator)
 
-		resp := postChatCompletions(t, "What is 2+2?", false, 20)
+		resp := postChatCompletions(t, suite, "What is 2+2?", false, 20)
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		clientTimer.Stop()
@@ -287,5 +173,5 @@ func TestIntegration_MultipleRequestsAccounting(t *testing.T) {
 	run := p.BuildProfile()
 	t.Logf("\n%s", run.SummaryTable())
 
-	assertAccounting(t)
+	assertAccounting(t, suite)
 }
